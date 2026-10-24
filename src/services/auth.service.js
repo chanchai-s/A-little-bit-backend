@@ -1,0 +1,135 @@
+import prisma from "../lib/prismaClient.js";
+import jwt from "jsonwebtoken";
+
+export const findUserByEmail = async (email) => {
+  const user = await prisma.user.findFirst({
+    where: { email: email },
+    include: { addresses: true },
+  });
+  return user;
+};
+
+export const createUser = async (dataObj) => {
+  console.log("dataObj", dataObj);
+
+  const normalizedRole =
+    typeof dataObj.role === "string" ? dataObj.role.toUpperCase() : "BUYER";
+
+  const newUser = await prisma.user.create({
+    data: {
+      firstname: dataObj.firstname,
+      lastname: dataObj.lastname,
+      username: dataObj.username,
+      email: dataObj.email,
+      password: dataObj.hashPassword,
+      role: normalizedRole,
+      phone: dataObj.phone,
+    },
+    include: {
+      addresses: true,
+    },
+  });
+
+  await prisma.address.create({
+    data: {
+      userId: newUser.id,
+      street: dataObj.street,
+      city: dataObj.city,
+      postalCode: dataObj.postalCode,
+      label: dataObj.label,
+      state: dataObj.state,
+      country: dataObj.country,
+      isDefault: true,
+    },
+  });
+
+  const walletExists = await prisma.wallet.findFirst({
+    where: { userId: newUser.id },
+  });
+
+  if (!walletExists) {
+    await prisma.wallet.create({
+      data: {
+        userId: newUser.id,
+        amount: 0,
+      },
+    });
+  }
+
+  return await prisma.user.findUnique({
+    where: { id: newUser.id },
+    include: {
+      addresses: true,
+      wallet: true,
+    },
+  });
+};
+
+export const createToken = async (user) => {
+  const payload = {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+  };
+  const token = jwt.sign(payload, process.env.JWT_SECRET, {
+    algorithm: "HS256",
+    expiresIn: "1d",
+  });
+  return token;
+};
+
+export const findUserById = async (id) => {
+  const user = await prisma.user.findFirst({
+    where: { id: id },
+  });
+  return user;
+};
+
+export const editUser = async (email, username, hashPassword) => {
+  const result = await prisma.user.update({
+    where: { email: email },
+    data: {
+      username,
+      password: hashPassword,
+    },
+  });
+  return result;
+};
+
+// ในไฟล์ Service
+
+// 1. เก็บ OTP ลงใน User
+export const updateOtp = async (email, otp, expires) => {
+  return await prisma.user.update({
+    where: { email: email },
+    data: {
+      resetOtp: otp,
+      resetOtpExpires: expires,
+    },
+  });
+};
+
+// 2. ตรวจสอบ OTP ว่าตรงและไม่หมดอายุไหม
+export const findUserByOtp = async (email, otp) => {
+  return await prisma.user.findFirst({
+    where: {
+      email: email,
+      resetOtp: otp,
+      resetOtpExpires: {
+        gt: new Date(),
+      },
+    },
+  });
+};
+
+// 3. เคลียร์ OTP หลังจากเปลี่ยนรหัสผ่านเสร็จแล้ว
+export const clearOtp = async (email, hashPassword) => {
+  return await prisma.user.update({
+    where: { email: email },
+    data: {
+      password: hashPassword,
+      resetOtp: null,
+      resetOtpExpires: null,
+    },
+  });
+};
